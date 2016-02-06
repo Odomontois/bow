@@ -1,4 +1,4 @@
-# Missing arrow things for [scalaz] (and [cats] in perspective)
+# Missing arrow things for [scalaz] \( and [cats] in perspective\)
 
 ## Additional `Arrow` classes
 
