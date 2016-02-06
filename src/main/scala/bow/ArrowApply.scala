@@ -1,7 +1,7 @@
 package bow
 
 import scala.language.higherKinds
-import scalaz.{Monad, Arrow}
+import scalaz.{MonadReader, Monad, Arrow}
 import scalaz.syntax.arrow._
 import functions._
 
@@ -23,11 +23,15 @@ object ArrowApply {
   def monadInstance[A, =>:[_, _]](implicit aap: ArrowApply[=>:]) = new ArrowApplyMonad
 }
 
-final class ArrowApplyMonad[A, =>:[_, _]](implicit aap: ArrowApply[=>:]) extends Monad[A =>: ?] {
+final class ArrowApplyMonad[X, =>:[_, _]](implicit aap: ArrowApply[=>:]) extends MonadReader[X =>: ?, X] {
 
   import aap.{id, arr, app}
 
-  def point[B](a: => B): A =>: B = arr(_ => a)
+  def point[B](a: => B): X =>: B = arr(_ => a)
 
-  def bind[B, C](fa: A =>: B)(f: B => (A =>: C)): A =>: C = (fa >>> arr(f) &&& id) >>> app
+  def bind[B, C](fa: X =>: B)(f: B => (X =>: C)): X =>: C = (fa >>> arr(f) &&& id) >>> app
+
+  def ask: X =>: X = id
+
+  def local[A](f: X => X)(fa: X =>: A): X =>: A = arr(f) >>> fa
 }
