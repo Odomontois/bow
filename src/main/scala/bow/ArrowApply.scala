@@ -29,9 +29,15 @@ final class ArrowApplyMonad[X, =>:[_, _]](implicit aap: ArrowApply[=>:]) extends
 
   def point[B](a: => B): X =>: B = arr(_ => a)
 
-  def bind[B, C](fa: X =>: B)(f: B => (X =>: C)): X =>: C = (fa >>> arr(f) &&& id) >>> app
+  def bind[B, C](fa: X =>: B)(f: B => (X =>: C)): X =>: C = (fa >>^ f &&& id) >>> app
+
+  override def map[A, B](fa: X =>: A)(f: A => B): X =>: B = fa >>^ f
+
+  override def apply2[A, B, C](fa: => X =>: A, fb: => X =>: B)(f: (A, B) => C): X =>: C = (fa &&& fb) >>^ f.tupled
+
+  override def ap[A, B](fa: => X =>: A)(f: => X =>: (A => B)): X =>: B = apply2(f, fa)(_ (_))
 
   def ask: X =>: X = id
 
-  def local[A](f: X => X)(fa: X =>: A): X =>: A = arr(f) >>> fa
+  def local[A](f: X => X)(fa: X =>: A): X =>: A = fa ^>> f
 }
