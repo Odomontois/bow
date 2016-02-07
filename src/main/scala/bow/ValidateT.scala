@@ -1,6 +1,6 @@
 package bow
 
-import bow.ValidateT._
+import bow.ValidateT.AppValid
 
 import scala.language.higherKinds
 import scalaz._
@@ -16,9 +16,9 @@ import bow.functions._
   * Time: 22:37
   * Validate Arrow transformer
   */
-sealed trait ValidateT[=>:[_, _], A, E, B] {
-  implicit val ar: ArrowChoice[=>:] = implicitly
+sealed abstract class ValidateT[=>:[_, _] : ArrowChoice, A, E, B] {
   def run: A =>: Validation[E, B]
+
   def andThen[C](v: ValidateT[=>:, B, E, C]): ValidateT[=>:, A, E, C] = new ComposeValidateT[=>:, A, E, B, C](this, v)
 }
 
@@ -32,7 +32,7 @@ final case class SuccessValidateT[=>:[_, _] : ArrowChoice, A, E, B](f: A =>: B) 
   }
 }
 
-final case class SimpleValidateT[=>:[_, _], A, E, B](run: A =>: Validation[E, B]) extends ValidateT[=>:, A, E, B]
+final case class SimpleValidateT[=>:[_, _] : ArrowChoice, A, E, B](run: A =>: Validation[E, B]) extends ValidateT[=>:, A, E, B]
 
 final case class SplitValidateT[=>:[_, _] : ArrowChoice, A1, A2, E, B1, B2]
 (left: ValidateT[=>:, A1, E, B1], right: ValidateT[=>:, A2, E, B2])
@@ -54,6 +54,17 @@ object ValidateT {
   implicit def instance[=>:[_, _] : ArrowChoice, E: AppValid]: Arrow[ValidateT[=>:, ?, E, ?]] = new ValidateTInstance[=>:, E]
 
   def fail[=>:[_, _] : ArrowChoice, E, A]: ValidateT[=>:, E, E, A] = SimpleValidateT(arr(Validation.failure[E, A]))
+
+  def success[=>:[_, _] : ArrowChoice, A, E, B](f: A =>: B): ValidateT[=>:, A, E, B] = SuccessValidateT[=>:, A, E, B](f)
+
+  def apply[=>:[_, _]] = new ApplyBuilder[=>:]
+
+  def wrap[=>:[_, _], E ,A](implicit ar: ArrowChoice[=>:])= ValidateT.apply(ar.id[Validation[E, A]])
+
+
+  class ApplyBuilder[=>:[_, _]] {
+    def apply[E, A, B](f: A =>: Validation[E, B])(implicit ar: ArrowChoice[=>:]): ValidateT[=>:, A, E, B] = SimpleValidateT(f)
+  }
 }
 
 final class ValidateTInstance[=>:[_, _], E: AppValid](implicit A: ArrowChoice[=>:]) extends Arrow[ValidateT[=>:, ?, E, ?]] {
@@ -86,4 +97,6 @@ final class ValidateTInstance[=>:[_, _], E: AppValid](implicit A: ArrowChoice[=>
     case _ => super.mapsnd(fab)(f)
   }
 }
+
+
 
