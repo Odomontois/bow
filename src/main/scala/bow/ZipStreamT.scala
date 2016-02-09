@@ -1,37 +1,53 @@
 package bow
 
 import scala.language.higherKinds
-import scalaz.{-\/, \/, \/-}
+import scalaz.{Arrow, -\/, \/, \/-}
 import scalaz.syntax.arrow._
 import scalaz.syntax.applicative._
+import bow.functions._
 
 /**
   * User: Oleg
   * Date: 08-Feb-16
   * Time: 19:15
   */
-case class ZipStreamT[=>:[_, _], A, B](run: Stream[A] =>: Stream[B]) /*extends AnyVal*/
+final case class ZipStreamT[=>:[_, _], A, B](run: Stream[A] =>: Stream[B])
+/*extends AnyVal*/
+
+object ZipStreamT {
+  def instance[=>:[_, _] : Arrow] = new ZipStreamTInstance[=>:]
+}
 
 
-final class ZipStreamTInstance[=>:[_, _]](implicit A: ArrowChoice[=>:]) extends ArrowChoice[ZipStreamT[=>:, ?, ?]] with EitherComposeFunctions {
+final class ZipStreamTInstance[=>:[_, _]](implicit A: Arrow[=>:])
+  extends ArrowChoice[ZipStreamT[=>:, ?, ?]]
+    with ArrowPlus[ZipStreamT[=>:, ?, ?]] with EitherComposeFunctions {
   type =||>[a, b] = ZipStreamT[=>:, a, b]
 
-  def zip[A, B]: (Stream[A], Stream[B]) =>: Stream[(A, B)] = A.arr { case (a, b) => a zip b }
-
-  def unzip[A, B]: Stream[(A, B)] =>: (Stream[A], Stream[B]) = A.arr { s => (s.map(_._1), s.map(_._2)) }
 
   def arr[A, B](f: (A) => B): A =||> B = ZipStreamT(A.arr(_.map(f)))
 
   def id[A]: A =||> A = ZipStreamT(A.id)
 
+  def zero[A, B]: A =||> B = ZipStreamT(constA[Stream[A], =>:](Stream.empty[B]))
+
+  def plus[A, B](fa: A =||> B, fb: A =||> B): A =||> B = ZipStreamT((fa.run &&& fb.run) >>^ concat)
+
   def compose[A, B, C](f: B =||> C, g: A =||> B): A =||> C = ZipStreamT(f.run <<< g.run)
 
-  def first[A, B, C](fa: A =||> B): (A, C) =||> (B, C) = ZipStreamT(unzip[A, C] >>> fa.run.first[Stream[C]] >>> zip[B, C])
+  def first[A, B, C](fa: A =||> B): (A, C) =||> (B, C) = ZipStreamT((fa.run.first[Stream[C]] ^>> unzip[A, C]) >>^ zip)
 
-  override def second[A, B, C](f: A =||> B): (C, A) =||> (C, B) = ZipStreamT(unzip[C, A] >>> f.run.second[Stream[C]] >>> zip[C, B])
+  override def second[A, B, C](f: A =||> B): (C, A) =||> (C, B) = ZipStreamT((f.run.second[Stream[C]] ^>> unzip[C, A]) >>^ zip)
 
   override def split[A, B, C, D](f: A =||> B, g: C =||> D): (A, C) =||> (B, D) =
-    ZipStreamT(unzip[A, C] >>> (f.run *** g.run) >>> zip[B, D])
+    ZipStreamT(((f.run *** g.run) ^>> unzip[A, C]) >>^ zip)
+
+
+  def concat[A]: ((Stream[A], Stream[A])) => Stream[A] = { case (a, b) => a append b }
+
+  def zip[A, B]: ((Stream[A], Stream[B])) => Stream[(A, B)] = { case (a, b) => a zip b }
+
+  def unzip[A, B]: Stream[(A, B)] => (Stream[A], Stream[B]) = { s => (s.map(_._1), s.map(_._2)) }
 
   /** Feed marked inputs through the argument arrow, passing the rest through unchanged to the output. */
   def left[A, B, C](fa: A =||> B): (A \/ C) =||> (B \/ C) = {

@@ -1,7 +1,9 @@
 package bow
 
 import scala.language.higherKinds
-import scalaz.{\/, Arrow}
+import scalaz.{-\/, \/-, \/, Arrow}
+import scalaz.syntax.arrow._
+import bow.syntax._
 
 /**
   * User: Oleg
@@ -9,6 +11,8 @@ import scalaz.{\/, Arrow}
   * Time: 14:30
   */
 trait ArrowChoice[=>:[_, _]] extends Arrow[=>:] {
+  private implicit def _arr = this
+
   /** Feed marked inputs through the argument arrow, passing the rest through unchanged to the output. */
   def left[A, B, C](fa: A =>: B): (A \/ C) =>: (B \/ C)
 
@@ -21,4 +25,11 @@ trait ArrowChoice[=>:[_, _]] extends Arrow[=>:] {
 
   /** Split the input between the two argument arrows and merge their outputs. */
   def fanin[A, B, C](fa: A =>: C)(fb: B =>: C): (A \/ B) =>: C = mapsnd(choose(fa)(fb))(_.fold(identity, identity))
+
+  private def toEither[A]: ((Boolean, A)) => A \/ A = { case (cond, x) => if (cond) \/-(x) else -\/(x) }
+
+  def ifThenElse[A, B](fCond: A =>: Boolean)(fThen: A =>: B, fElse: A =>: B): A =>: B =
+    (fCond &&& id) >>^ toEither >>> (fElse ||| fThen)
+
+
 }
