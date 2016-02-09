@@ -1,7 +1,7 @@
 package bow
 
 import scala.language.higherKinds
-import scalaz.{-\/, \/-, \/, Arrow}
+import scalaz._
 import scalaz.syntax.arrow._
 import bow.syntax._
 
@@ -10,7 +10,7 @@ import bow.syntax._
   * Date: 06-Feb-16
   * Time: 14:30
   */
-trait ArrowChoice[=>:[_, _]] extends Arrow[=>:] {
+trait ArrowChoice[=>:[_, _]] extends Arrow[=>:] with ProChoice[=>:] {
   private implicit def _arr = this
 
   /** Feed marked inputs through the argument arrow, passing the rest through unchanged to the output. */
@@ -30,6 +30,4 @@ trait ArrowChoice[=>:[_, _]] extends Arrow[=>:] {
 
   def ifThenElse[A, B](fCond: A =>: Boolean)(fThen: A =>: B, fElse: A =>: B): A =>: B =
     (fCond &&& id) >>^ toEither >>> (fElse ||| fThen)
-
-
 }

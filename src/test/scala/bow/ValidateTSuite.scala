@@ -3,8 +3,8 @@ package bow
 import scalaz.{NonEmptyList, ValidationNel, Validation}
 import scalaz.syntax.arrow._
 import scalaz.syntax.validation._
-import bow.std._
 import bow.functions._
+import bow.std._
 /**
   * User: Oleg
   * Date: 07-Feb-16

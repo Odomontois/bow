@@ -1,14 +1,14 @@
-package bow
+package bow.std
 
-import scalaz.\/
+import bow.ArrowChoice
 
 /**
   * User: Oleg
-  * Date: 07-Feb-16
-  * Time: 15:38
+  * Date: 09-Feb-16
+  * Time: 18:21
   */
-object std {
-  implicit val functionInstance = new ArrowChoice[Function1] {
+trait Function1Instances {
+  implicit object function1Choice extends ArrowChoice[Function1] {
 
     /** Feed marked inputs through the argument arrow, passing the rest through unchanged to the output. */
     def left[A, B, C](fa: (A) => B) = _.leftMap(fa)

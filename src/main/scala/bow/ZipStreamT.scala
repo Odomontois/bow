@@ -1,10 +1,11 @@
 package bow
 
 import scala.language.higherKinds
-import scalaz.{Arrow, -\/, \/, \/-}
+import scalaz._
 import scalaz.syntax.arrow._
-import scalaz.syntax.applicative._
 import bow.functions._
+import bow.std._
+import bow.syntax._
 
 /**
   * User: Oleg
@@ -15,7 +16,8 @@ final case class ZipStreamT[=>:[_, _], A, B](run: Stream[A] =>: Stream[B])
 /*extends AnyVal*/
 
 object ZipStreamT {
-  def instance[=>:[_, _] : Arrow] = new ZipStreamTInstance[=>:]
+  implicit def instance[=>:[_, _] : Arrow] = new ZipStreamTInstance[=>:]
+  implicit val aspect = ZipStreamAspect
 }
 
 
@@ -105,4 +107,17 @@ trait EitherComposeFunctions {
         case _ => Stream.empty
       }
   }
+}
+
+object ZipStreamAspect extends Aspect[ZipStreamT] {
+  def liftClass[A[_, _]](ar: ArrowChoice[A]): ArrowChoice[ZipStreamT[A, ?, ?]] = new ZipStreamTInstance[A]()(ar)
+
+  def tmap[A1[_, _], A2[_, _]](f: A1 ~~> A2)
+                              (implicit ar1: ArrowChoice[A1], ar2: ArrowChoice[A2]) =
+    new (ZipStreamT[A1, ?, ?] ~~> ZipStreamT[A2, ?, ?]) {
+      def apply[b, c](stream: ZipStreamT[A1, b, c]) = ZipStreamT(f(stream.run))
+    }
+
+  def lift[A[_, _], b, c](x: A[b, c])(implicit ar: ArrowChoice[A]): ZipStreamT[A, b, c] =
+    ZipStreamT(x.project[Stream])
 }
