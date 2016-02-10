@@ -1,35 +1,60 @@
 package bow
-import bow.std._
-import bow.functions._
-import scalaz.syntax.validation._
-import bow.syntax._
-import scalaz.NonEmptyList
+
 import bow.ValidateT.instance
+import bow.functions._
+import bow.std._
+import bow.syntax._
+import scala.language.higherKinds
+import scalaz.Free.Trampoline
+import scalaz.{Monad, Validation, Kleisli, NonEmptyList}
+import scalaz.syntax.validation._
 import scalaz.syntax.arrow._
+import scalaz.syntax.monad._
 
 /**
   * User: Oleg
   * Date: 09-Feb-16
   * Time: 23:53
   */
-object ValidateStreamSuite extends App {
 
-  type =!>[a, b] = ValidateT[Function1, a, NonEmptyList[(Int, String)], b]
+class ValidateStreamSuite[Arr[_, _]](implicit A: ArrowChoice[Arr]) {
+  def go: Arr[Stream[Int], Stream[String]] = {
+    type Err = NonEmptyList[String]
 
-  implicitly [ArrowChoice[=!>]]
-  def divisor(n: Int): Int =!> Boolean = arr[=!>](_ % n == 0)
-  def err[A](s: String): Int =!> A = ValidateT.make(x => (x,s).failureNel[A])
+    type V[A] = Validation[Err, A]
 
-  val div3 = divisor(3) ifTrue err("division by 3 is not good")
+    type =!>[a, b] = ValidateT[Arr, a, Err, b]
 
-  val div5 = divisor(5) ifTrue err("division by 5 is bad")
+    implicitly[ArrowChoice[=!>]]
 
-  val div15 = divisor(15) ifTrue err("division by 15 is pure evil")
+    def divisor(n: Int): Int =!> Boolean = arr[=!>](_ % n == 0)
 
-  val divAll = div15 >>> div5 >>> div3
+    def err[A, B](s: A => String): A =!> B = ValidateT.make[Arr](A.arr(x => s(x).failureNel))
 
-  //1 to 50 foreach (divAll.run andThen println)
-  val divStream = Aspect[ZipStreamT].lift(divAll)
+    def divErr(n: Int, mess: String): Int =!> Int = divisor(n) ifTrue err(num => s"number $num : $mess")
 
-  divStream.run.run(Stream.range(1, 1000)) bimap (_ foreach println, _ foreach println)
+    val div3 = divErr(3, "division by 3 is not good")
+
+    val div5 = divErr(5, "division by 5 is bad")
+
+    val div15 = divErr(15, "division by 15 is pure evil")
+
+    val divAll: Int =!> Int = div15 >>> div5 >>> div3
+
+    //1 to 50 foreach (divAll.run andThen println)
+    val divStream = Aspect[ZipStreamT].lift[=!>, Int, Int](divAll)
+
+    divStream.run.run >>^ (_.disjunction.bimap(_.stream, _ map (_.toString)).merge)
+  }
+}
+
+object ValidateStreamSuite /*extends ValidateStreamTrampSuite[Kleisli[Trampoline, ?, ?]]*/ {
+  type Arr[a, b] = Kleisli[Trampoline, a, b]
+  implicitly[Monad[Trampoline]]
+  implicitly[ArrowChoice[Arr]]
+
+  def main(args: Array[String]) {
+    new ValidateStreamSuite[Function1] go Stream.range(1, 1000) foreach println
+    new ValidateStreamSuite[Arr].go.run(Stream.range(1,10000)).run foreach println
+  }
 }
