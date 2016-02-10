@@ -5,4 +5,4 @@
   */
 package bow
 
-package object std extends Function1Instances with StreamInstances
+package object std extends Function1Instances with StreamInstances with KleisliInstances

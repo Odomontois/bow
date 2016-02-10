@@ -16,12 +16,13 @@ final case class ZipStreamT[=>:[_, _], A, B](run: Stream[A] =>: Stream[B])
 /*extends AnyVal*/
 
 object ZipStreamT {
-  implicit def instance[=>:[_, _] : Arrow] = new ZipStreamTInstance[=>:]
+  implicit def instance[=>:[_, _] : ArrowChoice] = new ZipStreamTInstance[=>:]
+
   implicit val aspect = ZipStreamAspect
 }
 
 
-final class ZipStreamTInstance[=>:[_, _]](implicit A: Arrow[=>:])
+final class ZipStreamTInstance[=>:[_, _]](implicit A: ArrowChoice[=>:])
   extends ArrowChoice[ZipStreamT[=>:, ?, ?]]
     with ArrowPlus[ZipStreamT[=>:, ?, ?]] with EitherComposeFunctions {
   type =||>[a, b] = ZipStreamT[=>:, a, b]
@@ -31,7 +32,7 @@ final class ZipStreamTInstance[=>:[_, _]](implicit A: Arrow[=>:])
 
   def id[A]: A =||> A = ZipStreamT(A.id)
 
-  def zero[A, B]: A =||> B = ZipStreamT(constA[Stream[A], =>:](Stream.empty[B]))
+  def zero[A, B]: A =||> B = ZipStreamT(A.constA[Stream[A], Stream[B]](Stream.empty[B]))
 
   def plus[A, B](fa: A =||> B, fb: A =||> B): A =||> B = ZipStreamT((fa.run &&& fb.run) >>^ concat)
 
@@ -53,25 +54,24 @@ final class ZipStreamTInstance[=>:[_, _]](implicit A: Arrow[=>:])
 
   /** Feed marked inputs through the argument arrow, passing the rest through unchanged to the output. */
   def left[A, B, C](fa: A =||> B): (A \/ C) =||> (B \/ C) = {
-    val ls = fa.run <<< A.arr((_: Stream[A \/ C]).collect({ case -\/(a) => a }))
-    val full = (A.id[Stream[A \/ C]] &&& ls) >>> A.arr((composeL[A, B, C] _).tupled)
+    val ls = fa.run ^>> ((_: Stream[A \/ C]).collect({ case -\/(a) => a }))
+    val full = (A.id[Stream[A \/ C]] &&& ls) >>^ (composeL[A, B, C] _).tupled
     ZipStreamT(full)
   }
 
+
   /** A mirror image of left. */
   override def right[A, B, C](fa: A =||> B): (C \/ A) =||> (C \/ B) = {
-    val rs = fa.run <<< A.arr((_: Stream[C \/ A]).collect({ case \/-(a) => a }))
-    val full = (A.id[Stream[C \/ A]] &&& rs) >>> A.arr((composeR[C, B, A] _).tupled)
+    def rs = fa.run ^>> ((_: Stream[C \/ A]).collect({ case \/-(a) => a }))
+    def full = (A.id[Stream[C \/ A]] &&& rs) >>^ (composeR[C, B, A] _).tupled
     ZipStreamT(full)
   }
 
   /** Split the input between the two argument arrows, retagging and merging their outputs. */
   override def choose[A1, A2, B1, B2](fa: A1 =||> B1)(fb: A2 =||> B2): (A1 \/ A2) =||> (B1 \/ B2) = {
-    val ls = fa.run <<< A.arr((_: Stream[A1 \/ A2]).collect({ case -\/(a) => a }))
-    val rs = fb.run <<< A.arr((_: Stream[A1 \/ A2]).collect({ case \/-(a) => a }))
-    val full = (A.id[Stream[A1 \/ A2]] &&& ls &&& rs) >>>
-      A.arr { case ((a, b), c) => (a, b, c) } >>>
-      A.arr((composeBoth[A1, A2, B1, B2] _).tupled)
+    val ls = fa.run ^>> ((_: Stream[A1 \/ A2]).collect({ case -\/(a) => a }))
+    val rs = fb.run ^>> ((_: Stream[A1 \/ A2]).collect({ case \/-(a) => a }))
+    val full = (A.id[Stream[A1 \/ A2]] &&& ls &&& rs) >>^ { case ((a, b), c) => composeBoth(a, b, c) }
     ZipStreamT(full)
   }
 }

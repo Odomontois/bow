@@ -49,26 +49,29 @@ final case class ComposeValidateT[=>:[_, _], A, E, B, C]
   override def andThen[D](v: ValidateT[=>:, C, E, D]): ValidateT[=>:, A, E, D] = ComposeValidateT(start, continue andThen v)
 }
 
-final case class ChooseValidateT[=>:[_, _] : ArrowChoice, A1, A2, E, B1, B2]
-(left: ValidateT[=>:, A1, E, B1], right: ValidateT[=>:, A2, E, B2]) extends ValidateT[=>:, A1 \/ A2, E, B1 \/ B2] {
-  def run: (A1 \/ A2) =>: Validation[E, B1 \/ B2] = (left.run +++ right.run) >>^ (_.bitraverse[Validation[E, ?], B1, B2](identity, identity))
+final class ChooseValidateT[=>:[_, _] : ArrowChoice, A1, A2, E, B1, B2]
+(left: => ValidateT[=>:, A1, E, B1], right: => ValidateT[=>:, A2, E, B2]) extends ValidateT[=>:, A1 \/ A2, E, B1 \/ B2] {
+  lazy private val _right = right
+  lazy private val _left = left
+
+  def run: (A1 \/ A2) =>: Validation[E, B1 \/ B2] = (_left.run +++~ _right.run) >>^ (_.bitraverse[Validation[E, ?], B1, B2](identity, identity))
 }
 
 object ValidateT {
   type AppValid[E] = Applicative[Validation[E, ?]]
 
-  implicit def instance[=>:[_, _] : ArrowChoice, E: AppValid]: Arrow[ValidateT[=>:, ?, E, ?]] = new ValidateTInstance[=>:, E]
+  implicit def instance[=>:[_, _] : ArrowChoice, E: AppValid]: ArrowChoice[ValidateT[=>:, ?, E, ?]] = new ValidateTInstance[=>:, E]
 
   def fail[=>:[_, _], E, A](implicit A: ArrowChoice[=>:]): ValidateT[=>:, E, E, A] = SimpleValidateT(A.arr(Validation.failure[E, A]))
 
   def success[=>:[_, _] : ArrowChoice, A, E, B](f: A =>: B): ValidateT[=>:, A, E, B] = SuccessValidateT[=>:, A, E, B](f)
 
-  def apply[=>:[_, _]] = new ApplyBuilder[=>:]
+  def make[=>:[_, _]] = new MakeBuilder[=>:]
 
-  def wrap[=>:[_, _], E, A](implicit ar: ArrowChoice[=>:]) = ValidateT.apply(ar.id[Validation[E, A]])
+  def wrap[=>:[_, _], E, A](implicit ar: ArrowChoice[=>:]) = ValidateT.make(ar.id[Validation[E, A]])
 
 
-  class ApplyBuilder[=>:[_, _]] {
+  class MakeBuilder[=>:[_, _]] {
     def apply[E, A, B](f: A =>: Validation[E, B])(implicit ar: ArrowChoice[=>:]): ValidateT[=>:, A, E, B] = SimpleValidateT(f)
   }
 }
@@ -89,7 +92,16 @@ final class ValidateTInstance[=>:[_, _], E: AppValid](implicit A: ArrowChoice[=>
   def first[A, B, C](fa: A =>! B): (A, C) =>! (B, C) = split(fa, id[C])
 
   /** Feed marked inputs through the argument arrow, passing the rest through unchanged to the output. */
-  def left[A, B, C](fa: A =>! B): (A \/ C) =>! (B \/ C) = ChooseValidateT(fa, id[C])
+  def left[A, B, C](fa: A =>! B): (A \/ C) =>! (B \/ C) = new ChooseValidateT(fa, id[C])
+
+  /** A mirror image of left. */
+  override def right[A, B, C](fa: A =>! B): (C \/ A) =>! (C \/ B) = new ChooseValidateT(id[C], fa)
+
+  /** Split the input between the two argument arrows, retagging and merging their outputs. */
+  override def choose[A1, A2, B1, B2](fa: A1 =>! B1)(fb: A2 =>! B2): (A1 \/ A2) =>! (B1 \/ B2) = new ChooseValidateT(fa, fb)
+
+  /** Split the input between the two argument arrows, retagging and merging their outputs. */
+  override def chooseLz[A1, A2, B1, B2](fa: => A1 =>! B1)(fb: => A2 =>! B2): (A1 \/ A2) =>! (B1 \/ B2) = new ChooseValidateT(fa, fb)
 
   override def second[A, B, C](f: A =>! B): (C, A) =>! (C, B) = split(id[C], f)
 

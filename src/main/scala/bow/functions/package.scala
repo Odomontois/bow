@@ -14,9 +14,9 @@ package object functions {
 }
 
 class ArrBuilder[=>:[_, _]]{
-  def apply[A, B](f: A => B)(implicit ar: Arrow[=>:])  = ar.arr(f)
+  def apply[A, B](f: A => B)(implicit A: Arrow[=>:])  = A.arr(f)
 }
 
 class ConstABuilder[=>:[_, _], A]{
-  def apply[B](x: => B)(implicit ar: Arrow[=>:]): A =>: B = ar.arr(_ => x)
+  def apply[B](x: => B)(implicit A: ArrowChoice[=>:]): A =>: B = A.constA(x)
 }
