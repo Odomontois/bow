@@ -21,31 +21,28 @@ class ValidateStreamSuite[Arr[_, _]](implicit A: ArrowChoice[Arr]) {
   def go: Arr[Stream[Int], Stream[String]] = {
     type Err = NonEmptyList[String]
 
-    type V[A] = Validation[Err, A]
-
     type =!>[a, b] = ValidateT[Arr, a, Err, b]
-
-    implicitly[ArrowChoice[=!>]]
 
     def divisor(n: Int): Int =!> Boolean = arr[=!>](_ % n == 0)
 
-    def err[A, B](s: A => String): A =!> B = ValidateT.make[Arr](A.arr(x => s(x).failureNel))
+    def err[A, B](s: A => String): A =!> B = ValidateT.make(arr[Arr](x => s(x).failureNel))
 
     def divErr(n: Int, mess: String): Int =!> Int = divisor(n) ifTrue err(num => s"number $num : $mess")
 
-    val div3 = divErr(3, "division by 3 is not good")
-
-    val div5 = divErr(5, "division by 5 is bad")
-
-    val div15 = divErr(15, "division by 15 is pure evil")
-
-    val divAll: Int =!> Int = div15 >>> div5 >>> div3
+    val divCheck = divErr(3, "FIZZ division by 3 is not good") >>>
+      divErr(5, "BUZZ division by 5 is bad") >>>
+      divErr(15, "FIZZBUZZ division by 15 is pure evil")
 
     //1 to 50 foreach (divAll.run andThen println)
-    val divStream = Aspect[ZipStreamT].lift[=!>, Int, Int](divAll)
+    val divStream = Aspect[ZipStreamT].lift[=!>, Int, Int](divCheck)
 
     divStream.run.run >>^ (_.disjunction.bimap(_.stream, _ map (_.toString)).merge)
   }
+
+  //
+  //  def remainders(r: Int): ZipStreamT[Arr, Int, Int]  = {
+  //
+  //  }
 }
 
 object ValidateStreamSuite /*extends ValidateStreamTrampSuite[Kleisli[Trampoline, ?, ?]]*/ {
@@ -54,7 +51,9 @@ object ValidateStreamSuite /*extends ValidateStreamTrampSuite[Kleisli[Trampoline
   implicitly[ArrowChoice[Arr]]
 
   def main(args: Array[String]) {
-    new ValidateStreamSuite[Function1] go Stream.range(1, 1000) foreach println
-    new ValidateStreamSuite[Arr].go.run(Stream.range(1,10000)).run foreach println
+    //    new ValidateStreamSuite[Function1] go Stream.range(1, 1000) foreach println
+    val begin = System.currentTimeMillis()
+    new ValidateStreamSuite[Arr].go.run(Stream.range(1, 100000)).run foreach println
+    println(s"${System.currentTimeMillis() - begin} ms")
   }
 }

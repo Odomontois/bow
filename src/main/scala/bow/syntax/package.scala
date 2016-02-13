@@ -21,18 +21,16 @@ package object syntax {
     def project[F[_]](implicit P: FunctorA[F]): F[A] =>: F[B] = P.mapA(fa)
   }
 
-  implicit class ChoiceLazyOps[=>:[_, _], A, B](fa: => A =>: B)(implicit ar: ArrowChoice[=>:]) {
-    def rightLz[C] = ar.rightLz[A, B, C](fa)
-
-    def +++~[A1, B1](fb: => A1 =>: B1): (A \/ A1) =>: (B \/ B1) = ar.chooseLz(fa)(fb)
-  }
-
   implicit class ChoiceCondOps[=>:[_, _], A](val cond: A =>: Boolean)(implicit ar: ArrowChoice[=>:]) {
     def ifTrue(fa: A =>: A): A =>: A = ar.ifThenElse(cond)(fa, ar.id[A])
 
     def ifFalse(fb: A =>: A): A =>: A = ar.ifThenElse(cond)(ar.id[A], fb)
 
     def thenElse[B](fa: A =>: B, fb: A =>: B): A =>: B = ar.ifThenElse(cond)(fa, fb)
+  }
+
+  implicit class PlusOps[=>:[_, _], A, B](fa: A =>: B)(implicit ar: ArrowPlus[=>:]) {
+    def <+>(fb: A =>: B): A =>: B = ar.plus(fa, fb)
   }
 
 

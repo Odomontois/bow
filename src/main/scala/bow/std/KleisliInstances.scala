@@ -1,6 +1,7 @@
 package bow.std
 
 import bow.ArrowChoice
+import bow.functions.LazyFunc
 
 import scala.language.higherKinds
 import scalaz.{Kleisli, Monad, \/}
@@ -41,24 +42,16 @@ trait KleisliInstances {
     } yield (b, c)
     }
 
-
     def left[A, B, C](fa: A =>> B): (A \/ C) =>> (B \/ C) = Kleisli {_.swap.traverse(fa.run).map(_.swap)}
 
+
+    override def mkLazy[A, B](fa: => Kleisli[M, A, B]): Kleisli[M, A, B] = Kleisli(new LazyFunc(fa.run))
 
     /** A mirror image of left. */
     override def right[A, B, C](fa: A =>> B): (C \/ A) =>> (C \/ B) = Kleisli {_.traverse(fa.run)}
 
     /** Split the input between the two argument arrows, retagging and merging their outputs. */
     override def choose[A1, A2, B1, B2](fa: A1 =>> B1)(fb: A2 =>> B2): (A1 \/ A2) =>> (B1 \/ B2) =
-      Kleisli { x => for {
-        b <- x traverse fb.run
-        a <- b.swap traverse fa.run
-      } yield a.swap
-      }
-
-
-    /** Same as choose but lazy on right argument */
-    override def chooseLz[A1, A2, B1, B2](fa: => A1 =>> B1 )(fb: => A2 =>> B2): (A1 \/ A2) =>> (B1 \/ B2) =
       Kleisli { x => for {
         b <- x traverse fb.run
         a <- b.swap traverse fa.run

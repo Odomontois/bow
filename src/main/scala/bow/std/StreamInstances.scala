@@ -5,6 +5,7 @@ import bow.{ArrowChoice, FunctorA}
 import scala.language.higherKinds
 import scalaz.{-\/, \/-, \/, StreamTMonadPlus}
 import scalaz.syntax.arrow._
+import bow.syntax._
 
 /**
   * User: Oleg
@@ -20,9 +21,7 @@ trait StreamInstances {
 
     def compose[A]: (Stream[Nothing] \/ (A, Stream[A])) => Stream[A] = _.fold(identity, { case (x, rest) => x #:: rest })
 
-    def mapA[=>:[_, _], A, B](f: A =>: B)(implicit ar: ArrowChoice[=>:]): Stream[A] =>: Stream[B] = {
-      val recur = ar.chooseLz(ar.id[Stream[Nothing]])(f *** mapA(f))
-      recur.dimap(decompose, compose)
-    }
+    def mapA[=>:[_, _], A, B](f: A =>: B)(implicit ar: ArrowChoice[=>:]): Stream[A] =>: Stream[B] =
+      (f *** ar.mkLazy(mapA(f))).right[Stream[Nothing]].dimap(decompose, compose)
   }
 }

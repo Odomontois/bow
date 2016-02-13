@@ -1,6 +1,7 @@
 package bow.std
 
 import bow.ArrowChoice
+import bow.functions.LazyFunc
 
 import scalaz.\/
 
@@ -12,25 +13,19 @@ import scalaz.\/
 trait Function1Instances {
   implicit object function1Choice extends ArrowChoice[Function1] {
 
-    class Choose[A1, A2, B1, B2](left: =>A1 => B1, right: => A2 => B2) extends ((A1 \/ A2) => (B1 \/ B2)) {
-      lazy val _right = right
-      lazy val _left = left
 
-      def apply(x: A1 \/ A2) = x.bimap(_left, _right)
-    }
 
     /** Feed marked inputs through the argument arrow, passing the rest through unchanged to the output. */
     def left[A, B, C](fa: (A) => B) = _.leftMap(fa)
+
+
+    override def mkLazy[A, B](fa: => (A) => B): (A) => B = new LazyFunc(fa)
 
     /** A mirror image of left. */
     override def right[A, B, C](fa: (A) => B) = _.map(fa)
 
     /** Split the input between the two argument arrows, retagging and merging their outputs. */
     override def choose[A1, A2, B1, B2](fa: A1 => B1)(fb: A2 => B2) = _.bimap(fa, fb)
-
-    /** Same as choose but lazy on right argument */
-    override def chooseLz[A1, A2, B1, B2](fa: => (A1) => B1)(fb: => (A2) => B2): (\/[A1, A2]) => \/[B1, B2] =
-      new Choose(fa, fb)
 
     def arr[A, B](f: (A) => B): A => B = f
 

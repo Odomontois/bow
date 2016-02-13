@@ -23,6 +23,10 @@ sealed abstract class ValidateT[=>:[_, _] : ArrowChoice, A, E, B] {
   def andThen[C](v: ValidateT[=>:, B, E, C]): ValidateT[=>:, A, E, C] = new ComposeValidateT[=>:, A, E, B, C](this, v)
 }
 
+final class LazyValidateT[=>:[_, _], A, E, B](f: => ValidateT[=>:, A, E, B])(implicit A: ArrowChoice[=>:]) extends ValidateT[=>:, A, E, B] {
+  override lazy val run = A.mkLazy(f.run)
+}
+
 final case class SuccessValidateT[=>:[_, _] : ArrowChoice, A, E, B](f: A =>: B) extends ValidateT[=>:, A, E, B] {
   def run = f >>^ Validation.success
 
@@ -50,11 +54,9 @@ final case class ComposeValidateT[=>:[_, _], A, E, B, C]
 }
 
 final class ChooseValidateT[=>:[_, _] : ArrowChoice, A1, A2, E, B1, B2]
-(left: => ValidateT[=>:, A1, E, B1], right: => ValidateT[=>:, A2, E, B2]) extends ValidateT[=>:, A1 \/ A2, E, B1 \/ B2] {
-  lazy private val _right = right
-  lazy private val _left = left
+(left: ValidateT[=>:, A1, E, B1], right: ValidateT[=>:, A2, E, B2]) extends ValidateT[=>:, A1 \/ A2, E, B1 \/ B2] {
 
-  def run: (A1 \/ A2) =>: Validation[E, B1 \/ B2] = (_left.run +++~ _right.run) >>^ (_.bitraverse[Validation[E, ?], B1, B2](identity, identity))
+  def run: (A1 \/ A2) =>: Validation[E, B1 \/ B2] = (left.run +++ right.run) >>^ (_.bitraverse[Validation[E, ?], B1, B2](identity, identity))
 }
 
 object ValidateT {
@@ -69,7 +71,6 @@ object ValidateT {
   def make[=>:[_, _]] = new MakeBuilder[=>:]
 
   def wrap[=>:[_, _], E, A](implicit ar: ArrowChoice[=>:]) = ValidateT.make(ar.id[Validation[E, A]])
-
 
   class MakeBuilder[=>:[_, _]] {
     def apply[E, A, B](f: A =>: Validation[E, B])(implicit ar: ArrowChoice[=>:]): ValidateT[=>:, A, E, B] = SimpleValidateT(f)
@@ -94,14 +95,14 @@ final class ValidateTInstance[=>:[_, _], E: AppValid](implicit A: ArrowChoice[=>
   /** Feed marked inputs through the argument arrow, passing the rest through unchanged to the output. */
   def left[A, B, C](fa: A =>! B): (A \/ C) =>! (B \/ C) = new ChooseValidateT(fa, id[C])
 
+
+  override def mkLazy[A, B](fa: => ValidateT[=>:, A, E, B]): ValidateT[=>:, A, E, B] = new LazyValidateT(fa)
+
   /** A mirror image of left. */
   override def right[A, B, C](fa: A =>! B): (C \/ A) =>! (C \/ B) = new ChooseValidateT(id[C], fa)
 
   /** Split the input between the two argument arrows, retagging and merging their outputs. */
   override def choose[A1, A2, B1, B2](fa: A1 =>! B1)(fb: A2 =>! B2): (A1 \/ A2) =>! (B1 \/ B2) = new ChooseValidateT(fa, fb)
-
-  /** Split the input between the two argument arrows, retagging and merging their outputs. */
-  override def chooseLz[A1, A2, B1, B2](fa: => A1 =>! B1)(fb: => A2 =>! B2): (A1 \/ A2) =>! (B1 \/ B2) = new ChooseValidateT(fa, fb)
 
   override def second[A, B, C](f: A =>! B): (C, A) =>! (C, B) = split(id[C], f)
 

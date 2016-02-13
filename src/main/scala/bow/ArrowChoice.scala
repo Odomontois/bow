@@ -16,18 +16,14 @@ trait ArrowChoice[=>:[_, _]] extends Arrow[=>:] with ProChoice[=>:] {
   /** Feed marked inputs through the argument arrow, passing the rest through unchanged to the output. */
   def left[A, B, C](fa: A =>: B): (A \/ C) =>: (B \/ C)
 
+  def mkLazy[A, B](fa: => A =>: B): A =>: B = fa
+
   /** A mirror image of left. */
   def right[A, B, C](fa: A =>: B): (C \/ A) =>: (C \/ B) =
     dimap[A \/ C, B \/ C, C \/ A, C \/ B](left(fa))(_.swap)(_.swap)
 
-  /** same as right, but lazy */
-  def rightLz[A, B, C](fa: => A =>: B): (C \/ A) =>: (C \/ B) = chooseLz(id[C])(fa)
-
   /** Split the input between the two argument arrows, retagging and merging their outputs. */
   def choose[A1, A2, B1, B2](fa: A1 =>: B1)(fb: A2 =>: B2): (A1 \/ A2) =>: (B1 \/ B2) = compose(left(fa), right(fb))
-
-  /** Same as choose but lazy on right argument */
-  def chooseLz[A1, A2, B1, B2](fa: => A1 =>: B1)(fb: => A2 =>: B2): (A1 \/ A2) =>: (B1 \/ B2) = choose(fa)(fb)
 
   /** Split the input between the two argument arrows and merge their outputs. */
   def fanin[A, B, C](fa: A =>: C)(fb: B =>: C): (A \/ B) =>: C = mapsnd(choose(fa)(fb))(_.fold(identity, identity))

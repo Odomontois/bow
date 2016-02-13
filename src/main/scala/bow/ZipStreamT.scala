@@ -12,10 +12,13 @@ import bow.syntax._
   * Date: 08-Feb-16
   * Time: 19:15
   */
-final case class ZipStreamT[=>:[_, _], A, B](run: Stream[A] =>: Stream[B])
-/*extends AnyVal*/
+final class ZipStreamT[=>:[_, _], A, B](f: => Stream[A] =>: Stream[B]) {
+  lazy val run = f
+}
 
 object ZipStreamT {
+  def apply[=>:[_, _], A, B](f: => Stream[A] =>: Stream[B]) = new ZipStreamT(f)
+
   implicit def instance[=>:[_, _] : ArrowChoice] = new ZipStreamTInstance[=>:]
 
   implicit val aspect = ZipStreamAspect
@@ -44,7 +47,6 @@ final class ZipStreamTInstance[=>:[_, _]](implicit A: ArrowChoice[=>:])
 
   override def split[A, B, C, D](f: A =||> B, g: C =||> D): (A, C) =||> (B, D) =
     ZipStreamT(((f.run *** g.run) ^>> unzip[A, C]) >>^ zip)
-
 
   def concat[A]: ((Stream[A], Stream[A])) => Stream[A] = { case (a, b) => a append b }
 
