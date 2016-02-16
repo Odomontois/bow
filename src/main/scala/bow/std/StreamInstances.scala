@@ -22,6 +22,6 @@ trait StreamInstances {
     def compose[A]: (Stream[Nothing] \/ (A, Stream[A])) => Stream[A] = _.fold(identity, { case (x, rest) => x #:: rest })
 
     def mapA[=>:[_, _], A, B](f: A =>: B)(implicit ar: ArrowChoice[=>:]): Stream[A] =>: Stream[B] =
-      (f *** ar.mkLazy(mapA(f))).right[Stream[Nothing]].dimap(decompose, compose)
+      (ar.id[Stream[Nothing]] +++ (f *** ar.mkLazy(mapA(f)))).dimap(decompose, compose)
   }
 }

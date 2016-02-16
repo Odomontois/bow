@@ -23,15 +23,17 @@ trait ArrowChoice[=>:[_, _]] extends Arrow[=>:] with ProChoice[=>:] {
     dimap[A \/ C, B \/ C, C \/ A, C \/ B](left(fa))(_.swap)(_.swap)
 
   /** Split the input between the two argument arrows, retagging and merging their outputs. */
-  def choose[A1, A2, B1, B2](fa: A1 =>: B1)(fb: A2 =>: B2): (A1 \/ A2) =>: (B1 \/ B2) = compose(left(fa), right(fb))
+  def choose[A1, A2, B1, B2](fa: => A1 =>: B1)(fb: => A2 =>: B2): (A1 \/ A2) =>: (B1 \/ B2) = compose(left(fa), right(fb))
 
   /** Split the input between the two argument arrows and merge their outputs. */
-  def fanin[A, B, C](fa: A =>: C)(fb: B =>: C): (A \/ B) =>: C = mapsnd(choose(fa)(fb))(_.fold(identity, identity))
+  def fanin[A, B, C](fa: => A =>: C)(fb: => B =>: C): (A \/ B) =>: C = mapsnd(choose(fa)(fb))(_.fold(identity, identity))
 
   private def toEither[A]: ((Boolean, A)) => A \/ A = { case (cond, x) => if (cond) \/-(x) else -\/(x) }
 
-  def ifThenElse[A, B](fCond: A =>: Boolean)(fThen: A =>: B, fElse: A =>: B): A =>: B =
+  def ifThenElse[A, B](fCond: A =>: Boolean)(fThen: => A =>: B, fElse: => A =>: B): A =>: B =
     (fCond &&& id) >>^ toEither >>> (fElse ||| fThen)
 
   def constA[A, B](x: => B): A =>: B = arr(_ => x)
+
+  def id[A] = arr(identity[A])
 }

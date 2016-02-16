@@ -3,7 +3,9 @@ package bow
 import bow.ValidateT.instance
 import bow.functions._
 import bow.std._
+import bow.sz._
 import bow.syntax._
+import scala.io.{StdIn, Source}
 import scala.language.higherKinds
 import scalaz.Free.Trampoline
 import scalaz.{Monad, Validation, Kleisli, NonEmptyList}
@@ -51,7 +53,7 @@ object ValidateStreamSuite /*extends ValidateStreamTrampSuite[Kleisli[Trampoline
   implicitly[ArrowChoice[Arr]]
 
   def main(args: Array[String]) {
-    //    new ValidateStreamSuite[Function1] go Stream.range(1, 1000) foreach println
+//    StdIn.readLine()
     val begin = System.currentTimeMillis()
     new ValidateStreamSuite[Arr].go.run(Stream.range(1, 100000)).run foreach println
     println(s"${System.currentTimeMillis() - begin} ms")

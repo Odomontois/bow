@@ -1,8 +1,9 @@
 package bow
 
 import scala.language.higherKinds
-import scalaz.{MonadReader, Monad, Arrow}
+import scalaz._
 import scalaz.syntax.arrow._
+import scalaz.syntax.either._
 import functions._
 
 /**
@@ -14,8 +15,29 @@ import functions._
   * Such arrows are equivalent to monads
   */
 
-trait ArrowApply[=>:[_, _]] extends Arrow[=>:] {
+trait ArrowApply[=>:[_, _]] extends Arrow[=>:] with ArrowChoice[=>:] {
   def app[A, B]: (A =>: B, A) =>: B
+
+  def join[A]: (Unit =>: A) =>: A = mapfst(app[Unit, A]) {(_, ())}
+
+  def left[A, B, C](f: A =>: B): (A \/ C) =>: (B \/ C) =
+    mapfst(join[B \/ C]) {
+      case -\/(a) => mapsnd(mapfst(f)({ (_: Unit) => a }))(_.left[C])
+      case \/-(c) => arr { (_: Unit) => c.right[B] }
+    }
+  /** A mirror image of left. */
+  override def right[A, B, C](f: A =>: B): (C \/ A) =>: (C \/ B) =
+    mapfst(join[C \/ B]) {
+      case -\/(c) => arr { (_: Unit) => c.left[B] }
+      case \/-(a) => mapsnd(mapfst(f)({ (_: Unit) => a }))(_.right[C])
+    }
+
+  /** Split the input between the two argument arrows, retagging and merging their outputs. */
+  override def choose[A1, A2, B1, B2](fa: => A1 =>: B1)(fb: => A2 =>: B2): (A1 \/ A2) =>: (B1 \/ B2) =
+    mapfst(join[B1 \/ B2]) {
+      case -\/(a1) => mapsnd(mapfst(fa)({ (_: Unit) => a1 }))(_.left[B2])
+      case \/-(a2) => mapsnd(mapfst(fb)({ (_: Unit) => a2 }))(_.right[B1])
+    }
 }
 
 

@@ -1,11 +1,11 @@
-package bow.std
+package bow.sz
 
 import bow.{ArrowChoice, FunctorA}
 
 import scala.language.higherKinds
 import scalaz.Validation
-import bow.syntax._
 import scalaz.syntax.arrow._
+import bow.syntax._
 
 /**
   * User: Oleg
