@@ -24,7 +24,7 @@ trait DiKleisliInstances {
 
     @inline def >~>[a, b](f: W[a] => M[b]) = DiKleisli[W, M, a, b](f)
 
-    def app[A, B]: (A >~> B, A) >~> B = ???
+    def app[A, B]: (A >~> B, A) >~> B = >~> { fx => fx.copoint._1.run(fx.map(_._2)) }
 
     def arr[A, B](f: (A) => B): A >~> B = >~> { wx => f(wx.copoint).point }
 

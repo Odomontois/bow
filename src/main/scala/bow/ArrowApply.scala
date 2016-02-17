@@ -18,6 +18,9 @@ import functions._
 trait ArrowApply[=>:[_, _]] extends Arrow[=>:] with ArrowChoice[=>:] {
   def app[A, B]: (A =>: B, A) =>: B
 
+  def unwrap[A, B](f: Unit =>: (A =>: B)): A =>: B =
+    compose(app[A, B], combine(compose(f, constA[A, Unit](())),id[A]))
+
   def join[A]: (Unit =>: A) =>: A = mapfst(app[Unit, A]) {(_, ())}
 
   def left[A, B, C](f: A =>: B): (A \/ C) =>: (B \/ C) =
