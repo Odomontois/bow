@@ -47,6 +47,33 @@ sealed trait Flow[-A, +B] {
     }
   }
 
+  def input(items: A*): Stream[B] = feed(items.toStream)
+
+  def map[C](f: B => C): Flow[A, C] = fold(
+    end = End(),
+    input = run => Input(i => run(i).map(f)),
+    output = (res, next) => Output(f(res), next.map(f))
+  )
+
+  def filter(f: B => Boolean): Flow[A, B] = fold(
+    end = End(),
+    input = run => Input(i => run(i).filter(f)),
+    output = (res, next) => if (f(res)) Output(res, next.filter(f)) else next.filter(f)
+  )
+
+  def take(n: Long): Flow[A, B] = if (n <= 0) End()
+  else fold(
+    end = End(),
+    input = run => Input(i => run(i).take(n)),
+    output = (res, next) => Output(res, next.take(n - 1))
+  )
+
+  def takeWhile(f: B => Boolean): Flow[A, B] = fold(
+    end = End(),
+    input = run => Input(i => run(i).takeWhile(f)),
+    output = (res, next) => if (f(res)) Output(res, next.takeWhile(f)) else End()
+  )
+
   private def flatMapRest[A1 <: A, B1 >: B](f: B => Flow[A1, B1], rest: Flow[A1, B1]): Flow[A1, B1] =
     rest.fold(
       end = self.flatMap(f),
@@ -58,7 +85,7 @@ sealed trait Flow[-A, +B] {
   def flatMap[A1 <: A, B1 >: B](f: B => Flow[A1, B1]): Flow[A1, B1] =
     self.fold(
       end = End(),
-      input = run => Input(i => self.flatMap(f)),
+      input = run => Input(i => run(i).flatMap(f)),
       output = (res, next) => next.flatMapRest(f, f(res))
     )
 
@@ -76,7 +103,7 @@ sealed trait Flow[-A, +B] {
     self.fold(
       end = other.fold(
         end = End(),
-        input = f => End[A,B]() andThen f(None),
+        input = f => End[A, B]() andThen f(None),
         output = (res, next) => Output(res, End() andThen next)
       ),
       input = f => Input(x => f(x) andThen other),
@@ -89,6 +116,7 @@ sealed trait Flow[-A, +B] {
 }
 
 object Flow {
+
   def End[A, B]() = new Flow[A, B] {
     def fold[T](end: => T, input: (Option[A] => Flow[A, B]) => T, output: (B, Flow[A, B]) => T): T = end
   }
@@ -101,12 +129,19 @@ object Flow {
     def fold[T](end: => T, input: (Option[A] => Flow[A, B]) => T, output: (B, Flow[A, B]) => T): T = output(res, next)
   }
 
+  def Id[A]: Flow[A, A] = Input {
+    case Some(x) => Output(x, Id)
+    case None => End()
+  }
+
   def map[A, B](f: A => B): Flow[A, B] = Input {
     case Some(x) => Output(f(x), map(f))
     case None => End()
   }
 
-  def fromStream[A](stream: Stream[A]): Flow[Any, A] = stream match {
+  def stream[A](items: A*) = fromStream(items.toStream)
+
+  def fromStream[A, B](stream: Stream[B]): Flow[A, B] = stream match {
     case x #:: xs => Output(x, fromStream(xs))
     case _ => End()
   }
