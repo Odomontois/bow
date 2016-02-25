@@ -2,6 +2,10 @@ package bow.flow
 
 import java.util.NoSuchElementException
 
+import bow.ArrowChoice
+
+import scalaz.{\/-, -\/, \/}
+
 /**
   * User: Oleg
   * Date: 24-Feb-16
@@ -68,10 +72,75 @@ sealed trait Flow[-A, +B] {
     output = (res, next) => Output(res, next.take(n - 1))
   )
 
+  def drop(n: Long): Flow[A, B] = if (n <= 0) self
+  else fold(
+    end = End(),
+    input = run => Input(i => run(i).drop(n)),
+    output = (res, next) => next.drop(n - 1)
+  )
+
   def takeWhile(f: B => Boolean): Flow[A, B] = fold(
     end = End(),
     input = run => Input(i => run(i).takeWhile(f)),
     output = (res, next) => if (f(res)) Output(res, next.takeWhile(f)) else End()
+  )
+
+  def dropWhile(f: B => Boolean): Flow[A, B] = fold(
+    end = End(),
+    input = run => Input(i => run(i).dropWhile(f)),
+    output = (res, next) => if (f(res)) next.dropWhile(f) else Output(res, next)
+  )
+
+  /** filter for input */
+  def censor[A1 <: A](f: A1 => Boolean): Flow[A1, B] = fold(
+    end = End(),
+    input = run => Input({
+      case i@Some(x) => if (f(x)) run(i).censor(f) else self.censor(f)
+      case None => run(None).censor(f)
+    }),
+    output = (res, next) => Output(res, next.censor(f))
+  )
+
+  /** take for input, take only N presented values */
+  def accept(n: Long): Flow[A, B] = if (n <= 0) End()
+  else fold(
+    end = End(),
+    input = run => Input({
+      case i@Some(x) => run(i).accept(n - 1)
+      case None => run(None).accept(n)
+    }),
+    output = (res, next) => Output(res, next.accept(n))
+  )
+
+  /** drop for input, drop first N presented values */
+  def ignore(n: Long): Flow[A, B] = if (n <= 0) self
+  else fold(
+    end = End(),
+    input = run => Input({
+      case i@Some(x) => self.ignore(n - 1)
+      case None => run(None).ignore(n)
+    }),
+    output = (res, next) => Output(res, next.ignore(n))
+  )
+
+  /** takeWhile for input, accept while predicate succedes */
+  def acceptWhile[A1 <: A](f: A1 => Boolean): Flow[A1, B] = fold(
+    end = End(),
+    input = run => Input({
+      case i@Some(x) => if (f(x)) run(i).acceptWhile(f) else End()
+      case None => run(None).acceptWhile(f)
+    }),
+    output = (res, next) => Output(res, next.acceptWhile(f))
+  )
+
+  /** dropWhile for input, ingores while predicate succedes */
+  def ignoreWhile[A1 <: A](f: A1 => Boolean): Flow[A1, B] = fold(
+    end = End(),
+    input = run => Input({
+      case i@Some(x) => if (f(x)) self.ignoreWhile(f) else run(i)
+      case None => run(None).ignoreWhile(f)
+    }),
+    output = (res, next) => Output(res, next.ignoreWhile(f))
   )
 
   private def flatMapRest[A1 <: A, C](f: B => Flow[A1, C], rest: Flow[A1, C]): Flow[A1, C] =
@@ -113,6 +182,51 @@ sealed trait Flow[-A, +B] {
         output = (c, otherNext) => Output(c, self andThen otherNext)
       )
     )
+
+  /** supplementary state for `leftA` with both inputs remembered,
+    * feeds remembered input ASAP */
+  private def firstRemRL[C](leftI: A, rightI: C): Flow[(A, C), (B, C)] = fold(
+    end = End(),
+    input = run => run(Some(leftI)).firstRemR(rightI),
+    output = (res, next) => Output((res, rightI), next.firstRemRL(leftI, rightI))
+  )
+
+  /** supplementary state for `leftA` with both inputs remembered */
+  private def firstRemR[C](rightI: C): Flow[(A, C), (B, C)] = fold(
+    end = End(),
+    input = run => Input {
+      case Some((a, c)) => run(Some(a)).firstRemR(c)
+      case None => run(None).firstRemR(rightI)
+    },
+    output = (res, next) => Output((res, rightI), next.firstRemR(rightI))
+  )
+
+  /** arrow first combinator,
+    * requires at least one input before output
+    * feeds right output with the last remembered input
+    * If there is not input, finish the flow */
+  def first[C]: Flow[(A, C), (B, C)] = fold(
+    end = End(),
+    input = run => Input {
+      case Some((a, c)) => run(Some(a)).firstRemR(c)
+      case None => run(None).first
+    },
+    output = (b, next) => Input {
+      case Some((a, c)) => Output((b, c), next.firstRemRL(a, c))
+      case None => End()
+    }
+  )
+  /** arrow with choice left combinator
+    * outputs second as soon as it gets it*/
+  def left[C]: Flow[A \/ C, B \/ C] = fold(
+    end = End(),
+    input = run => Input {
+      case Some(-\/(a)) => run(Some(a)).left
+      case Some(\/-(c)) => Output(\/-(c), self.left)
+      case None => run(None).left
+    }           ,
+    output = (res, next) => Output(-\/(res), next.left)
+  )
 }
 
 object Flow {
@@ -156,6 +270,19 @@ object Flow {
 
   object Output {
     def unapply[A, B](stream: Flow[A, B]): Option[(B, Flow[A, B])] = stream.fold(None, _ => None, (x, y) => Some(x, y))
+  }
+
+  implicit object flowArrowInstance extends ArrowChoice[Flow] {
+    override def id[A]: Flow[A, A] = Flow.Id
+
+    /** Feed marked inputs through the argument arrow, passing the rest through unchanged to the output. */
+    def left[A, B, C](fa: Flow[A, B]): Flow[\/[A, C], \/[B, C]] = fa.left
+
+    def arr[A, B](f: (A) => B): Flow[A, B] = Flow.map(f)
+
+    def first[A, B, C](fa: Flow[A, B]): Flow[(A, C), (B, C)] = fa.first
+
+    def compose[A, B, C](f: Flow[B, C], g: Flow[A, B]): Flow[A, C] = g andThen f
   }
 
 }
