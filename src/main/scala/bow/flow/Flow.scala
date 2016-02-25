@@ -74,7 +74,7 @@ sealed trait Flow[-A, +B] {
     output = (res, next) => if (f(res)) Output(res, next.takeWhile(f)) else End()
   )
 
-  private def flatMapRest[A1 <: A, B1 >: B](f: B => Flow[A1, B1], rest: Flow[A1, B1]): Flow[A1, B1] =
+  private def flatMapRest[A1 <: A, C](f: B => Flow[A1, C], rest: Flow[A1, C]): Flow[A1, C] =
     rest.fold(
       end = self.flatMap(f),
       input = run => Input(i => self.flatMapRest(f, run(i))),
@@ -82,7 +82,7 @@ sealed trait Flow[-A, +B] {
     )
 
 
-  def flatMap[A1 <: A, B1 >: B](f: B => Flow[A1, B1]): Flow[A1, B1] =
+  def flatMap[A1 <: A, C](f: B => Flow[A1, C]): Flow[A1, C] =
     self.fold(
       end = End(),
       input = run => Input(i => run(i).flatMap(f)),
