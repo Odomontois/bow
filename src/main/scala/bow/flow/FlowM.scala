@@ -2,7 +2,7 @@ package bow.flow
 
 
 import scala.language.higherKinds
-import scalaz.{Applicative, Functor, Monad, Monoid, StreamT}
+import scalaz.{Applicative, Functor, Monad, Monoid, StreamT, WriterT}
 import scalaz.syntax.monad._
 import scalaz.syntax.monoid._
 
@@ -42,6 +42,29 @@ trait FlowM[F[_], R, A, B] {
     )
   )
 
+//  def feedWrite(source: StreamT[F, A])(implicit F: Monad[F], R: Monoid[R]): StreamT[WriterT[F, R, ?], B] = {
+//    type WM[X] = WriterT[F, R, X]
+//
+//    lazy val WM = WriterT.writerMonad
+//
+//    fold[StreamT[WM,B]](
+//      end = x => StreamT[WM,B](WriterT.put((StreamT.Done: StreamT.Step[B, StreamT[WM,B]]).point[F])(x)),
+//      input = run => {
+//        val go = source.step.map {
+//          case StreamT.Done => run(None).map(_.feed(StreamT.empty))
+//          case StreamT.Skip(next) => F.point(feed(next()))
+//          case StreamT.Yield(x, next) => run(Some(x)).map(_.feed(next()))
+//        }
+//
+//        StreamT[WM, B](go.map(x => StreamT.Skip(StreamT[WM, B](x.map(y => StreamT.Skip(y))))))
+//      },
+//      skip = next => StreamT[WM, B](next.map(f => StreamT.Skip(f.feed(source)))),
+//      output = (res, next) => StreamT[WM, B](
+//        next.map(f => StreamT.Yield(res, f.feed(source)))
+//      )
+//    )
+//  }
+
   import scalaz.syntax.functor._
 
   @inline private def _End(x: R): FlowM[F, R, A, B] = FlowM.End(x)
@@ -77,7 +100,6 @@ trait FlowM[F[_], R, A, B] {
     skip = lift => Skip[F, R, A, C](lift.map(_.map(f))),
     output = (res, next) => Output[F, R, A, C](f(res), next.map(_.map(f)))
   )
-
 
   def mapM[C](f: B => F[C])(implicit F: Monad[F]): FlowM[F, R, A, C] = fold(
     end = x => End[F, R, A, C](x),
@@ -278,7 +300,6 @@ trait FlowM[F[_], R, A, B] {
       output = (res, next) => Output[F, R, A, C](res, next.map(self.flatMapRest(f, _)))
     )
 
-
   def flatMap[C](f: B => FlowM[F, R, A, C])(implicit F: Functor[F], R: Monoid[R]): FlowM[F, R, A, C] =
     self.fold(
       end = End[F, R, A, C],
@@ -289,7 +310,6 @@ trait FlowM[F[_], R, A, B] {
 }
 
 object FlowM {
-
 
   def End[F[_], R, A, B](x: R): FlowM[F, R, A, B] = new FlowM[F, R, A, B] {
     def fold[X](end: End[X], input: Input[X], skip: Skip[X], output: Output[X]): X = end(x)
@@ -333,7 +353,6 @@ object FlowM {
       case None => End[F, Unit, A, A]().point[F]
     }
 
-
   private case class Plus[F[_], R, A, B](x: R, flow: FlowM[F, R, A, B])(implicit F: Functor[F], R: Monoid[R]) extends FlowM[F, R, A, B] {
     override def +:(y: R)(implicit F: Functor[F], R: Monoid[R]) = new Plus[F, R, A, B](y |+| x, flow)
 
@@ -351,4 +370,18 @@ object FlowM {
       case Some(x) => F.point(Output[F, Unit, A, B](f(x), F.point(map(f))))
       case None => F.point(End[F, Unit, A, B](()))
     }
+
+  class Make[F[_], R, A, B] {
+    type Flow = FlowM[F, R, A, B]
+
+    def End(x: R): Flow = FlowM.End[F, R, A, B](x)
+
+    def Input(run: Option[A] => F[Flow]): Flow = FlowM.Input[F, R, A, B](run)
+
+    def Output(res: => B, next: => F[Flow]): Flow = FlowM.Output[F, R, A, B](res, next)
+
+    def Skip(next: => F[Flow]): Flow = FlowM.Skip[F, R, A, B](next)
+  }
+
+  def Make[F[_], R, A, B] = new Make[F, R, A, B]
 }
