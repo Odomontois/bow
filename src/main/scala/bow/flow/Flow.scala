@@ -4,7 +4,7 @@ import java.util.NoSuchElementException
 
 import bow.ArrowChoice
 
-import scalaz.{\/-, -\/, \/}
+import scalaz._
 
 /**
   * User: Oleg
@@ -89,6 +89,13 @@ sealed trait Flow[-A, +B] {
     end = End(),
     input = run => Input(i => run(i).dropWhile(f)),
     output = (res, next) => if (f(res)) next.dropWhile(f) else Output(res, next)
+  )
+
+  /** map for input */
+  def comap[C](f: C => A): Flow[C, B] = fold(
+    end = End(),
+    input = run => Input(i => run(i.map(f)).comap(f)),
+    output = (res, next) => Output(res, next.comap(f))
   )
 
   /** filter for input */
@@ -217,14 +224,14 @@ sealed trait Flow[-A, +B] {
     }
   )
   /** arrow with choice left combinator
-    * outputs second as soon as it gets it*/
+    * outputs second as soon as it gets it */
   def left[C]: Flow[A \/ C, B \/ C] = fold(
     end = End(),
     input = run => Input {
       case Some(-\/(a)) => run(Some(a)).left
       case Some(\/-(c)) => Output(\/-(c), self.left)
       case None => run(None).left
-    }           ,
+    },
     output = (res, next) => Output(-\/(res), next.left)
   )
 }
@@ -251,6 +258,28 @@ object Flow {
   def map[A, B](f: A => B): Flow[A, B] = Input {
     case Some(x) => Output(f(x), map(f))
     case None => End()
+  }
+
+  def loop[A, B, C](initial: C)(flow: Flow[(A, C), (B, C)]): Flow[A, B] = flow.fold(
+    end = End(),
+    input = run => Input {
+      case Some(a) => loop(initial)(run(Some(a, initial)))
+      case None => loop(initial)(run(None))
+    },
+    output = (res, next) => Output(res._1, loop(res._2)(next))
+  )
+
+  def recur[A, B](flow: Flow[(A, Flow[A, B]), B]): Flow[A, B] = {
+    lazy val app: Flow[A, B] = flow.fold(
+      end = End(),
+      input = run => Input {
+        case Some(a) => recur(run(Some(a, app)))
+        case None => recur(run(None))
+      },
+      output = (res, next) => Output(res, recur(next))
+    )
+
+    app
   }
 
   def stream[A](items: A*) = fromStream(items.toStream)
@@ -283,6 +312,16 @@ object Flow {
     def first[A, B, C](fa: Flow[A, B]): Flow[(A, C), (B, C)] = fa.first
 
     def compose[A, B, C](f: Flow[B, C], g: Flow[A, B]): Flow[A, C] = g andThen f
+  }
+
+  implicit def flowMonadInstance[X] = new MonadReader[Flow[X, ?], X] {
+    def ask: Flow[X, X] = Flow.Id
+
+    def local[A](f: (X) => X)(fa: Flow[X, A]): Flow[X, A] = fa.comap(f)
+
+    def point[A](a: => A): Flow[X, A] = Flow.stream(a)
+
+    def bind[A, B](fa: Flow[X, A])(f: (A) => Flow[X, B]): Flow[X, B] = fa.flatMap(f)
   }
 
 }

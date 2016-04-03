@@ -1,4 +1,5 @@
 import bow.flow.Flow
+import Flow.{Input, Output, End}
 
 val u = Flow.fromStream(Stream(1, 2, 3))
 
@@ -24,4 +25,22 @@ Flow.Id[Int].flatMap(x => Flow.stream(2, 3)).input(1, 2).toList
   x <- Flow.Id[Int]
   y = x * 2
   z <- Flow.fromStream(Stream.fill(x)(y - 3))
-} yield z).feed(Stream.range(1, 2000)).sum
+} yield z).feed(Stream.range(1, 10)).sum
+
+val collatz = {
+  def output(n: Int): Flow[Int, Int] = Output(n,
+    if (n == 1) input
+    else if (n % 2 == 0) output(n / 2)
+    else output(n * 3 + 1)
+  )
+
+  def input: Flow[Int, Int] = Input{
+    case Some(x) => output(x)
+    case None => End()
+  }
+
+  input
+}
+
+collatz.input(2, 3, 4).toList
+
