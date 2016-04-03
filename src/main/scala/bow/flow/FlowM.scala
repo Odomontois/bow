@@ -49,15 +49,18 @@ trait FlowM[F[_], R, A, B] {
   @inline private def _Skip(lift: FM): FlowM[F, R, A, B] = FlowM.Skip[F, R, A, B](lift)
   @inline private def _Output(res: B, next: FM): FlowM[F, R, A, B] = FlowM.Output[F, R, A, B](res, next)
 
+  final type FMOpt = F[FlowM[F, Option[R], A, B]]
+  final type ThatOpt = FlowM[F, Option[R], A, B]
+  @inline private def _EndSome(x: R): FlowM[F, Option[R], A, B] = FlowM.End(Some(x))
+  @inline private def _EndNone: FlowM[F, Option[R], A, B] = FlowM.End(None)
+  @inline private def _InputOpt(run: Option[A] => FMOpt): FlowM[F, Option[R], A, B] = FlowM.Input[F, Option[R], A, B](run)
+  @inline private def _SkipOpt(lift: FMOpt): FlowM[F, Option[R], A, B] = FlowM.Skip[F, Option[R], A, B](lift)
+  @inline private def _OutputOpt(res: B, next: FMOpt): FlowM[F, Option[R], A, B] = FlowM.Output[F, Option[R], A, B](res, next)
+
   import FlowM._
 
-  def +:(x: R)(implicit F: Functor[F], R: Monoid[R]): That =
-    fold(
-      end = y => _End(x |+| y),
-      input = run => _Input(y => run(y).map(x +: _)),
-      skip = lift => _Skip(lift.map(x +: _)),
-      output = (res, next) => _Output(res, next map (x +: _))
-    )
+  def +:(x: R)(implicit F: Functor[F], R: Monoid[R]): That = new FlowM.Plus[F, R, A, B](x, self)
+
 
   def ++(that: FlowM[F, R, A, B])(implicit F: Functor[F], R: Monoid[R]): That = new FlowM[F, R, A, B] {
     def fold[X](end: End[X], input: Input[X], skip: Skip[X], output: Output[X]): X =
@@ -84,14 +87,14 @@ trait FlowM[F[_], R, A, B] {
   )
 
   def filter(f: B => Boolean)(implicit F: Functor[F]): That = fold(
-    end = x => _End(x),
+    end = _End,
     input = run => _Input(i => run(i).map(_.filter(f))),
     skip = next => _Skip(next.map(_.filter(f))),
     output = (res, next) => if (f(res)) _Output(res, next.map(_.filter(f))) else _Skip(next.map(_.filter(f)))
   )
 
   def filterM(f: B => F[Boolean])(implicit F: Functor[F]): That = fold(
-    end = x => _End(x),
+    end = _End,
     input = run => _Input(i => run(i).map(_.filterM(f))),
     skip = next => _Skip(next.map(_.filterM(f))),
     output = (res, next) => _Skip(f(res).map {
@@ -100,21 +103,189 @@ trait FlowM[F[_], R, A, B] {
     })
   )
 
-  def take(n: Long)(implicit F: Functor[F]): FlowM[F, Option[R], A, B] = if (n <= 0) End(None)
+  def take(n: Long)(implicit F: Functor[F]): ThatOpt = if (n <= 0) _EndNone
   else fold(
-    end = x => End[F, Option[R], A, B](Some(x)),
-    input = run => Input[F, Option[R], A, B](i => run(i).map(_.take(n))),
-    skip = next => Skip[F, Option[R], A, B](next.map(_.take(n))),
-    output = (res, next) => Output[F, Option[R], A, B](res, next.map(_.take(n - 1)))
+    end = _EndSome,
+    input = run => _InputOpt(i => run(i).map(_.take(n))),
+    skip = next => _SkipOpt(next.map(_.take(n))),
+    output = (res, next) => _OutputOpt(res, next.map(_.take(n - 1)))
   )
 
   def drop(n: Long)(implicit F: Functor[F]): That = if (n <= 0) self
   else fold(
-    end = x => _End(x),
+    end = _End,
     input = run => _Input(i => run(i).map(_.drop(n))),
     skip = next => _Skip(next.map(_.drop(n))),
     output = (res, next) => _Skip(next.map(_.drop(n - 1)))
   )
+
+  def takeWhile(f: B => Boolean)(implicit F: Functor[F]): ThatOpt = fold(
+    end = _EndSome,
+    input = run => _InputOpt(i => run(i).map(_.takeWhile(f))),
+    skip = lift => _SkipOpt(lift.map(_.takeWhile(f))),
+    output = (res, next) => if (f(res)) _OutputOpt(res, next.map(_.takeWhile(f))) else _EndNone
+  )
+
+  def takeWhileM(f: B => F[Boolean])(implicit F: Functor[F]): ThatOpt = fold(
+    end = _EndSome,
+    input = run => _InputOpt(i => run(i).map(_.takeWhileM(f))),
+    skip = lift => _SkipOpt(lift.map(_.takeWhileM(f))),
+    output = (res, next) => _SkipOpt(f(res).map {
+      case true => _OutputOpt(res, next.map(_.takeWhileM(f)))
+      case false => _EndNone
+    })
+  )
+
+  def dropWhile(f: B => Boolean)(implicit F: Functor[F]): That = fold(
+    end = _End,
+    input = run => _Input(i => run(i).map(_.dropWhile(f))),
+    skip = next => _Skip(next.map(_.dropWhile(f))),
+    output = (res, next) => if (f(res)) _Skip(next.map(_.dropWhile(f))) else _Output(res, next)
+  )
+
+  def dropWhileM(f: B => F[Boolean])(implicit F: Functor[F]): That = fold(
+    end = _End,
+    input = run => _Input(i => run(i).map(_.dropWhileM(f))),
+    skip = next => _Skip(next.map(_.dropWhileM(f))),
+    output = (res, next) => _Skip(f(res).map {
+      case true => _Skip(next.map(_.dropWhileM(f)))
+      case false => _Output(res, next)
+    }))
+
+  /** map for input */
+  def comap[C](f: C => A)(implicit F: Functor[F]): FlowM[F, R, C, B] = fold(
+    end = End[F, R, C, B],
+    input = run => Input[F, R, C, B](i => run(i.map(f)).map(_.comap(f))),
+    skip = next => Skip[F, R, C, B](next.map(_.comap(f))),
+    output = (res, next) => Output[F, R, C, B](res, next.map(_.comap(f)))
+  )
+
+  /** map for input */
+  def comapM[C](f: C => F[A])(implicit F: Functor[F]): FlowM[F, R, C, B] = fold(
+    end = End[F, R, C, B],
+    input = run => Input[F, R, C, B] {
+      case None => run(None).map(_.comapM(f))
+      case Some(x) => f(x).map(y => Skip[F, R, C, B](run(Some(y)).map(_.comapM(f))))
+    },
+    skip = next => Skip[F, R, C, B](next.map(_.comapM(f))),
+    output = (res, next) => Output[F, R, C, B](res, next.map(_.comapM(f)))
+  )
+
+  /** filter for input */
+  def censor(f: A => Boolean)(implicit F: Applicative[F]): That = fold(
+    end = _End,
+    input = run => _Input {
+      case i@Some(x) => if (f(x)) run(i).map(_.censor(f)) else F.point(self.censor(f))
+      case None => run(None).map(_.censor(f))
+    },
+    skip = next => _Skip(next.map(_.censor(f))),
+    output = (res, next) => _Output(res, next.map(_.censor(f)))
+  )
+
+  /** filter for input */
+  def censorM(f: A => F[Boolean])(implicit F: Functor[F]): That = fold(
+    end = _End,
+    input = run => _Input {
+      case i@Some(x) => f(x).map {
+        case true => _Skip(run(i).map(_.censorM(f)))
+        case false => self.censorM(f)
+      }
+      case None => run(None).map(_.censorM(f))
+    },
+    skip = next => _Skip(next.map(_.censorM(f))),
+    output = (res, next) => _Output(res, next.map(_.censorM(f)))
+  )
+
+  /** take for input, take only N presented values */
+  def accept(n: Long)(implicit F: Functor[F]): ThatOpt = if (n <= 0) _EndNone
+  else fold(
+    end = _EndSome,
+    input = run => _InputOpt {
+      case i@Some(_) => run(i).map(_.accept(n - 1))
+      case None => run(None).map(_.accept(n))
+    },
+    skip = next => _SkipOpt(next.map(_.accept(n))),
+    output = (res, next) => _OutputOpt(res, next.map(_.accept(n)))
+  )
+
+  /** drop for input, drop first N presented values */
+  def ignore(n: Long)(implicit F: Applicative[F]): That = if (n <= 0) self
+  else fold(
+    end = _End,
+    input = run => _Input {
+      case i@Some(_) => F.point(self.ignore(n - 1))
+      case None => run(None).map(_.ignore(n))
+    },
+    skip = next => _Skip(next.map(_.ignore(n))),
+    output = (res, next) => _Output(res, next.map(_.ignore(n)))
+  )
+
+  /** takeWhile for input, accept while predicate succedes */
+  def acceptWhile(f: A => Boolean)(implicit F: Applicative[F]): ThatOpt = fold(
+    end = _EndSome,
+    input = run => _InputOpt {
+      case i@Some(x) => if (f(x)) run(i).map(_.acceptWhile(f)) else F.point(_EndNone)
+      case None => run(None).map(_.acceptWhile(f))
+    },
+    skip = lift => _SkipOpt(lift.map(_.acceptWhile(f))),
+    output = (res, next) => _OutputOpt(res, next.map(_.acceptWhile(f)))
+  )
+
+  /** takeWhile for input, accept while predicate succedes */
+  def acceptWhileM(f: A => F[Boolean])(implicit F: Functor[F]): ThatOpt = fold(
+    end = _EndSome,
+    input = run => _InputOpt {
+      case i@Some(x) => f(x).map {
+        case true => _SkipOpt(run(i).map(_.acceptWhileM(f)))
+        case false => _EndNone
+      }
+      case None => run(None).map(_.acceptWhileM(f))
+    },
+    skip = lift => _SkipOpt(lift.map(_.acceptWhileM(f))),
+    output = (res, next) => _OutputOpt(res, next.map(_.acceptWhileM(f)))
+  )
+
+  /** dropWhile for input, ingores while predicate succedes */
+  def ignoreWhile(f: A => Boolean)(implicit F: Applicative[F]): That = fold(
+    end = _End,
+    input = run => _Input {
+      case i@Some(x) => if (f(x)) F.point(self.ignoreWhile(f)) else run(i)
+      case None => run(None).map(_.ignoreWhile(f))
+    },
+    skip = lift => _Skip(lift.map(_.ignoreWhile(f))),
+    output = (res, next) => _Output(res, next.map(_.ignoreWhile(f)))
+  )
+
+  /** dropWhile for input, ingores while predicate succedes */
+  def ignoreWhileM(f: A => F[Boolean])(implicit F: Functor[F]): That = fold(
+    end = _End,
+    input = run => _Input {
+      case i@Some(x) => f(x).map {
+        case true => self.ignoreWhileM(f)
+        case false => _Skip(run(i))
+      }
+      case None => run(None).map(_.ignoreWhileM(f))
+    },
+    skip = lift => _Skip(lift.map(_.ignoreWhileM(f))),
+    output = (res, next) => _Output(res, next.map(_.ignoreWhileM(f)))
+  )
+
+  private def flatMapRest[C](f: B => FlowM[F, R, A, C], rest: FlowM[F, R, A, C])(implicit F: Functor[F], R: Monoid[R]): FlowM[F, R, A, C] =
+    rest.fold(
+      end = x => x +: self.flatMap(f),
+      input = run => Input[F, R, A, C](i => run(i).map(self.flatMapRest(f, _))),
+      skip = lift => Skip[F, R, A, C](lift.map(self.flatMapRest(f, _))),
+      output = (res, next) => Output[F, R, A, C](res, next.map(self.flatMapRest(f, _)))
+    )
+
+
+  def flatMap[C](f: B => FlowM[F, R, A, C])(implicit F: Functor[F], R: Monoid[R]): FlowM[F, R, A, C] =
+    self.fold(
+      end = End[F, R, A, C],
+      input = run => Input[F, R, A, C](i => run(i).map(_.flatMap(f))),
+      skip = lift => Skip[F, R, A, C](lift.map(_.flatMap(f))),
+      output = (res, next) => Skip[F, R, A, C](next.map(_.flatMapRest(f, f(res))))
+    )
 }
 
 object FlowM {
@@ -161,6 +332,19 @@ object FlowM {
       case Some(x) => Output[F, Unit, A, A](x, Id[F, A].point[F]).point[F]
       case None => End[F, Unit, A, A]().point[F]
     }
+
+
+  private case class Plus[F[_], R, A, B](x: R, flow: FlowM[F, R, A, B])(implicit F: Functor[F], R: Monoid[R]) extends FlowM[F, R, A, B] {
+    override def +:(y: R)(implicit F: Functor[F], R: Monoid[R]) = new Plus[F, R, A, B](y |+| x, flow)
+
+    def fold[X](end: End[X], input: Input[X], skip: Skip[X], output: Output[X]): X =
+      flow.fold(
+        end = y => end(x |+| y),
+        input = run => input(y => run(y).map(x +: _)),
+        skip = lift => skip(lift.map(x +: _)),
+        output = (res, next) => output(res, next map (x +: _))
+      )
+  }
 
   def map[F[_], A, B](f: A => B)(implicit F: Monad[F]): FlowM[F, Unit, A, B] =
     Input[F, Unit, A, B] {
