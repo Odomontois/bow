@@ -2,7 +2,7 @@ package bow.flow
 
 
 import scala.language.higherKinds
-import scalaz.{-\/, Applicative, BindRec, Free, Functor, Monad, Monoid, Semigroup, StreamT, WriterT, \/-}
+import scalaz.{-\/, Applicative, BindRec, Free, Functor, Monad, Monoid, Semigroup, StreamT, WriterT, \/, \/-}
 import scalaz.syntax.monad._
 import scalaz.syntax.semigroup._
 import scalaz.syntax.either._
@@ -370,6 +370,30 @@ trait FlowM[F[_], R, A, B] {
       output = (x, next) => next.map(u => (f(x) +: u, stream).left[R])
     )
   })((self, is))
+
+  def mapSumRec[S](f: B => S, g: R => S, i: A)(implicit F: Monad[F] with BindRec[F], S: Semigroup[S]): F[S] = F.tailrecM[(That, Option[S]), S]({ case (flow, acc) => flow.fold[F[(That, Option[S]) \/ S]](
+    end = x => F.point((acc match {
+      case Some(y) => y |+| g(x)
+      case None => g(x)
+    }).right[(That, Option[S])]),
+    input = h => h(Some(i)).map(u => (u, acc).left[S]),
+    skip = next => next.map(u => (u, acc).left[S]),
+    output = (x, next) => next.map(u => (u, acc match {
+      case None => Some(f(x))
+      case Some(y) => Some(y |+| f(x))
+    }).left[S])
+  )
+  })((self, None))
+
+  def sumRec(implicit F: Monad[F] with BindRec[F], R: Monoid[R], evA: Unit =:= A, evB: B =:= R): F[R] = F.tailrecM[(That, R), R]({
+    case (flow, acc) => flow.fold[F[(That, R) \/ R]](
+      end = x => F.point((acc |+| x).right[(That, R)]),
+      input = g => g(Some(())).map(u => (u, acc).left[R]),
+      skip = next => next.map(u => (u, acc).left[R]),
+      output = (x, next) => next.map(u => (u, acc |+| x).left[R])
+    )
+  })((self, R.zero))
+
 }
 
 object FlowM {

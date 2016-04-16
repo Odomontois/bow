@@ -27,20 +27,26 @@ val primes: Stream[Int] = 2 #:: {
   Stream.from(3, 2).filter(isPrime)
 }
 
-def range[F[_]: Monad](start: Int, end: Int, step: Int = 1): FlowM[F, Unit, Unit, Int] =
-  if (start >= end) FlowM.End(())
+def range[F[_] : Monad](start: Int, end: Int, step: Int = 1): FlowM[F, Int, Unit, Int] =
+  if (start >= end) FlowM.End(0)
   else FlowM.Output(start, range[F](start + step, end, step).point[F])
 
 def time[R](block: => R): R = {
   val t0 = System.nanoTime()
-  val result = block    // call-by-name
+  val result = block // call-by-name
   val t1 = System.nanoTime()
   println("Elapsed time: " + (t1 - t0) + "ns")
   result
 }
 
 time(range[Function0](1, 1000000).mapResult(_ => 0).collectFree(identity, StreamT.empty).run)
-time(range[Id](1, 1000000).mapResult(_ => 0).collectRec(identity,StreamT.empty))
+time(range[Id](1, 1000000).mapSumRec(identity, _ => 0, ()))
+time(range[Id](1, 1000000).sumRec)
+time (1 to 1000000 sum)
+time(range[Id](1, 1000000).mapSumRec(identity, _ => 0, ()))
+time(range[Id](1, 1000000).sumRec)
+time (1 to 1000000 sum)
+
 
 
 
