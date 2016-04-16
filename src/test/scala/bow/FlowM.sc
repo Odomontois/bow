@@ -1,11 +1,15 @@
 import bow.flow.FlowM
 
+import scalaz.Free.Trampoline
 import scalaz.Id._
-import scalaz.StreamT
+import scalaz.{Monad, StreamT}
 import scalaz.std.stream._
-
+import scalaz.std.anyVal._
+import scalaz.std.function._
+import scalaz.syntax.monad._
 
 val Ints = FlowM.Make[Id, Unit, Int, Int]
+val IntsT = FlowM.Make[Function0, Unit, Int, Int]
 
 def divgo(n: Int, d: Int): Ints.Flow =
   if (n % d == 0) Ints.Output(d, divgo(n / d, d))
@@ -23,8 +27,20 @@ val primes: Stream[Int] = 2 #:: {
   Stream.from(3, 2).filter(isPrime)
 }
 
-def findDivs(n: Int): Stream[Int] =
-  divisors(n).feed(StreamT.fromStream[Id, Int](primes)).toStream
+def range[F[_]: Monad](start: Int, end: Int, step: Int = 1): FlowM[F, Unit, Unit, Int] =
+  if (start >= end) FlowM.End(())
+  else FlowM.Output(start, range[F](start + step, end, step).point[F])
 
-findDivs(123123000)
+def time[R](block: => R): R = {
+  val t0 = System.nanoTime()
+  val result = block    // call-by-name
+  val t1 = System.nanoTime()
+  println("Elapsed time: " + (t1 - t0) + "ns")
+  result
+}
+
+time(range[Function0](1, 1000000).mapResult(_ => 0).collectFree(identity, StreamT.empty).run)
+time(range[Id](1, 1000000).mapResult(_ => 0).collectRec(identity,StreamT.empty))
+
+
 

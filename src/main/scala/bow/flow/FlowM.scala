@@ -2,9 +2,10 @@ package bow.flow
 
 
 import scala.language.higherKinds
-import scalaz.{Applicative, Functor, Monad, Monoid, StreamT, WriterT}
+import scalaz.{-\/, Applicative, BindRec, Free, Functor, Monad, Monoid, Semigroup, StreamT, WriterT, \/-}
 import scalaz.syntax.monad._
-import scalaz.syntax.monoid._
+import scalaz.syntax.semigroup._
+import scalaz.syntax.either._
 
 
 /**
@@ -37,33 +38,19 @@ trait FlowM[F[_], R, A, B] {
       StreamT[F, B](go.map(x => StreamT.Skip(StreamT[F, B](x.map(y => StreamT.Skip(y))))))
     },
     skip = next => StreamT[F, B](next.map(f => StreamT.Skip(f.feed(source)))),
-    output = (res, next) => StreamT[F, B](
-      next.map(f => StreamT.Yield(res, f.feed(source)))
-    )
+    output = (res, next) => StreamT[F, B](next.map(f => StreamT.Yield(res, f.feed(source))))
   )
 
-//  def feedWrite(source: StreamT[F, A])(implicit F: Monad[F], R: Monoid[R]): StreamT[WriterT[F, R, ?], B] = {
-//    type WM[X] = WriterT[F, R, X]
-//
-//    lazy val WM = WriterT.writerMonad
-//
-//    fold[StreamT[WM,B]](
-//      end = x => StreamT[WM,B](WriterT.put((StreamT.Done: StreamT.Step[B, StreamT[WM,B]]).point[F])(x)),
-//      input = run => {
-//        val go = source.step.map {
-//          case StreamT.Done => run(None).map(_.feed(StreamT.empty))
-//          case StreamT.Skip(next) => F.point(feed(next()))
-//          case StreamT.Yield(x, next) => run(Some(x)).map(_.feed(next()))
-//        }
-//
-//        StreamT[WM, B](go.map(x => StreamT.Skip(StreamT[WM, B](x.map(y => StreamT.Skip(y))))))
-//      },
-//      skip = next => StreamT[WM, B](next.map(f => StreamT.Skip(f.feed(source)))),
-//      output = (res, next) => StreamT[WM, B](
-//        next.map(f => StreamT.Yield(res, f.feed(source)))
-//      )
-//    )
-//  }
+  def exec(source: StreamT[F, A])(implicit F: Monad[F]): F[R] = fold(
+    end = x => F.point(x),
+    input = run => source.step.flatMap {
+      case StreamT.Done => run(None).flatMap(_.exec(StreamT.empty))
+      case StreamT.Skip(next) => exec(next())
+      case StreamT.Yield(x, next) => run(Some(x)).flatMap(_.exec(next()))
+    },
+    skip = next => next.flatMap(_.exec(source)),
+    output = (_, next) => next.flatMap(_.exec(source))
+  )
 
   import scalaz.syntax.functor._
 
@@ -81,11 +68,12 @@ trait FlowM[F[_], R, A, B] {
   @inline private def _OutputOpt(res: B, next: FMOpt): FlowM[F, Option[R], A, B] = FlowM.Output[F, Option[R], A, B](res, next)
 
   import FlowM._
+  import StreamT.{Done, Yield, Skip => SSkip}
 
-  def +:(x: R)(implicit F: Functor[F], R: Monoid[R]): That = new FlowM.Plus[F, R, A, B](x, self)
+  def +:(x: R)(implicit F: Functor[F], R: Semigroup[R]): That = new FlowM.Plus[F, R, A, B](x, self)
 
 
-  def ++(that: FlowM[F, R, A, B])(implicit F: Functor[F], R: Monoid[R]): That = new FlowM[F, R, A, B] {
+  def ++(that: => FlowM[F, R, A, B])(implicit F: Functor[F], R: Semigroup[R]): That = new FlowM[F, R, A, B] {
     def fold[X](end: End[X], input: Input[X], skip: Skip[X], output: Output[X]): X =
       self.fold(
         end = x => (x +: that).fold(end, input, skip, output),
@@ -292,7 +280,7 @@ trait FlowM[F[_], R, A, B] {
     output = (res, next) => _Output(res, next.map(_.ignoreWhileM(f)))
   )
 
-  private def flatMapRest[C](f: B => FlowM[F, R, A, C], rest: FlowM[F, R, A, C])(implicit F: Functor[F], R: Monoid[R]): FlowM[F, R, A, C] =
+  private def flatMapRest[C](f: B => FlowM[F, R, A, C], rest: FlowM[F, R, A, C])(implicit F: Functor[F], R: Semigroup[R]): FlowM[F, R, A, C] =
     rest.fold(
       end = x => x +: self.flatMap(f),
       input = run => Input[F, R, A, C](i => run(i).map(self.flatMapRest(f, _))),
@@ -300,13 +288,88 @@ trait FlowM[F[_], R, A, B] {
       output = (res, next) => Output[F, R, A, C](res, next.map(self.flatMapRest(f, _)))
     )
 
-  def flatMap[C](f: B => FlowM[F, R, A, C])(implicit F: Functor[F], R: Monoid[R]): FlowM[F, R, A, C] =
+  def flatMap[C](f: B => FlowM[F, R, A, C])(implicit F: Functor[F], R: Semigroup[R]): FlowM[F, R, A, C] =
     self.fold(
       end = End[F, R, A, C],
       input = run => Input[F, R, A, C](i => run(i).map(_.flatMap(f))),
       skip = lift => Skip[F, R, A, C](lift.map(_.flatMap(f))),
       output = (res, next) => Skip[F, R, A, C](next.map(_.flatMapRest(f, f(res))))
     )
+
+  def andThen[C](other: FlowM[F, R, B, C])(implicit F: Functor[F], R: Semigroup[R]): FlowM[F, R, A, C] =
+    self.fold(
+      end = x => other.fold[FlowM[F, R, A, C]](
+        end = y => End[F, R, A, C](x |+| y),
+        input = (run: Option[B] => F[FlowM[F, R, B, C]]) => Skip[F, R, A, C](run(None).map(s => self.andThen(s))),
+        skip = next => Skip[F, R, A, C](next.map(self andThen _)),
+        output = (res, next) => Output[F, R, A, C](res, next map (self andThen _))
+      ),
+      input = run => Input[F, R, A, C](x => run(x).map(_ andThen other)),
+      skip = next => Skip[F, R, A, C](next.map(_ andThen other)),
+      output = (res, selfNext) => other.fold[FlowM[F, R, A, C]](
+        end = y => End(y),
+        input = (run: Option[B] => F[FlowM[F, R, B, C]]) => Skip[F, R, A, C](selfNext.map(sn => Skip[F, R, A, C](run(Some(res)).map(sn andThen _)))),
+        skip = next => Skip[F, R, A, C](next.map(self andThen _)),
+        output = (c, otherNext) => Output[F, R, A, C](c, otherNext.map(self andThen _))
+      )
+    )
+
+  private def repeatWith(start: FlowM[F, R, A, B])(implicit F: Functor[F]): FlowM[F, Nothing, A, B] = new FlowM[F, Nothing, A, B] {
+    def fold[X](end: End[X], input: Input[X], skip: Skip[X], output: Output[X]): X =
+      self.fold(
+        end = x => self.repeatWith(start).fold(end, input, skip, output),
+        input = f => input(x => f(x).map(_.repeatWith(start))),
+        skip = f => skip(f.map(_.repeatWith(start))),
+        output = (res, next) => output(res, next.map(_.repeatWith(start))))
+  }
+
+  def repeat(implicit F: Functor[F]): FlowM[F, Nothing, A, B] = self.repeatWith(self)
+
+  def replicate(n: Long)(implicit F: Functor[F], R: Monoid[R]): FlowM[F, R, A, B] = if (n == 0) End(R.zero) else self ++ self.replicate(n - 1)
+
+  def mapResult[S](f: R => S)(implicit F: Functor[F]): FlowM[F, S, A, B] = new FlowM[F, S, A, B] {
+    def fold[X](end: End[X], input: Input[X], skip: Skip[X], output: Output[X]): X =
+      self.fold(
+        end = x => end(f(x)),
+        input = g => input(x => g(x).map(_.mapResult(f))),
+        skip = g => skip(g.map(_.mapResult(f))),
+        output = (res, next) => output(res, next.map(_.mapResult(f))))
+  }
+
+  def collect(f: B => R, is: StreamT[F, A])(implicit F: Monad[F], R: Semigroup[R]): F[R] = fold(
+    end = x => F.point(x),
+    input = g => is.step.flatMap(_.apply(
+      yieldd = (x, next) => g(Some(x)).flatMap(_.collect(f, next)),
+      skip = self.collect(f, _),
+      done = g(None).flatMap(_.collect(f, is))
+    )),
+    skip = _.flatMap(_.collect(f, is)),
+    output = (x, next) => next.flatMap(u => f(x) +: u collect(f, is))
+  )
+
+  def collectFree(f: B => R, is: StreamT[F, A])(implicit F: Functor[F], R: Semigroup[R]): Free[F, R] = fold[Free[F, R]](
+    end = x => Free.pure(x),
+    input = g => Free[F, R](is.step.map(_.apply(
+      yieldd = (x, next) => Free[F, R](g(Some(x)).map(_.collectFree(f, next))),
+      skip = s => self.collectFree(f, s),
+      done = Free[F, R](g(None).map(_.collectFree(f, is)))
+    ))),
+    skip = next => Free[F, R](next.map(_.collectFree(f, is))),
+    output = (x, next) => Free[F, R](next.map(u => f(x) +: u collectFree(f, is)))
+  )
+
+  def collectRec(f: B => R, is: StreamT[F, A])(implicit F: Monad[F] with BindRec[F], R: Semigroup[R]): F[R] = F.tailrecM[(That, StreamT[F, A]), R]({ case (flow, stream) =>
+    flow.fold(
+      end = x => F.point(x.right[(That, StreamT[F, A])]),
+      input = g => is.step.flatMap(_.apply(
+        done = g(None).map(u => (u, is).left[R]),
+        yieldd = (x, next) => g(Some(x)).map(u => (u, is).left[R]),
+        skip = next => F.point((flow, next).left[R])
+      )),
+      skip = next => next.map(u => (u, stream).left[R]),
+      output = (x, next) => next.map(u => (f(x) +: u, stream).left[R])
+    )
+  })((self, is))
 }
 
 object FlowM {
@@ -353,8 +416,8 @@ object FlowM {
       case None => End[F, Unit, A, A]().point[F]
     }
 
-  private case class Plus[F[_], R, A, B](x: R, flow: FlowM[F, R, A, B])(implicit F: Functor[F], R: Monoid[R]) extends FlowM[F, R, A, B] {
-    override def +:(y: R)(implicit F: Functor[F], R: Monoid[R]) = new Plus[F, R, A, B](y |+| x, flow)
+  private case class Plus[F[_], R, A, B](x: R, flow: FlowM[F, R, A, B])(implicit F: Functor[F], R: Semigroup[R]) extends FlowM[F, R, A, B] {
+    override def +:(y: R)(implicit F: Functor[F], R: Semigroup[R]) = new Plus[F, R, A, B](y |+| x, flow)
 
     def fold[X](end: End[X], input: Input[X], skip: Skip[X], output: Output[X]): X =
       flow.fold(
